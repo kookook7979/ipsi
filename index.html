@@ -1,0 +1,1452 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Excel → Grid + 자동 통계(텍스트+분포곡선) + 이상치 클릭보기</title>
+
+  <!-- AG Grid (Community) -->
+  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/dist/ag-grid-community.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/styles/ag-grid.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/styles/ag-theme-quartz.min.css">
+
+  <!-- SheetJS -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- Chart.js (KDE 곡선) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; background:#fff; }
+
+    :root{
+      --blue-900: #0b2a4a;
+      --blue-800: #0f3d66;
+      --blue-700: #14518a;
+      --blue-100: #e8f1ff;
+      --blue-050: #f3f7ff;
+      --line: #e9edf3;
+      --text: #1f2937;
+      --muted: #6b7280;
+    }
+
+    /* ✅ 화면 전체 우상단 로고(고정, 배경 흰색) */
+    .globalLogo {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 9999;
+      pointer-events: auto;
+    }
+    .logoWrap{
+      width: 200px;
+      height: 70px;
+      background: #fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      overflow:hidden;
+      border-radius: 14px;
+      border: 1px solid rgba(0,0,0,0.06);
+      box-shadow: 0 10px 28px rgba(11,42,74,0.10);
+      cursor: pointer;
+      user-select: none;
+    }
+    .logoWrap.hasLogo{ border: 0; }
+    .logoWrap img{
+      max-width: 92%;
+      max-height: 92%;
+      object-fit: contain;
+      display:none;
+    }
+    .logoHint{
+      font-size: 12px;
+      color: var(--muted);
+    }
+    #logoInput { display:none; }
+
+    .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding-right: 320px; }
+    .toolbar > * { height:36px; }
+
+    select, button {
+      padding:0 10px;
+      border-radius: 10px;
+      border:1px solid var(--line);
+      background:#fff;
+    }
+    button{ cursor:pointer; }
+    button:hover{ border-color:#cdd7e3; }
+    .spacer { flex:1; }
+
+    .layout{
+      display:flex; gap:14px; margin-top:10px;
+      height: calc(100vh - 120px);
+      min-height: 560px;
+    }
+    .left{ flex: 1.8; min-width:520px; }
+    .right{ flex: 1; min-width:420px; }
+    .panel{
+      border:1px solid var(--line); border-radius:14px;
+      padding:12px; background:#fff;
+      height:100%; box-sizing:border-box;
+      overflow:auto;
+    }
+    #gridWrap{ padding:0; overflow:hidden; }
+    #grid{ height:100%; width:100%; }
+
+    /* ✅ 필터 걸린 컬럼 헤더 강조 */
+    .filtered-header {
+      font-weight:800;
+      background: var(--blue-100) !important;
+      color: var(--blue-900) !important;
+      border-bottom: 2px solid var(--blue-700);
+    }
+
+    /* 홀짝 행 */
+    .row-odd  { background: rgba(11,42,74,0.03); }
+    .row-even { background: transparent; }
+
+    /* 필터 태그 */
+    .filter-tags{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; padding-right: 320px; }
+    .tag{
+      display:inline-flex; align-items:center; gap:6px;
+      padding:6px 10px; border:1px solid rgba(20,81,138,0.25);
+      border-radius:999px;
+      background: var(--blue-050);
+      font-size:13px; line-height:1; user-select:none;
+      color: var(--blue-900);
+    }
+    .tag strong{ font-weight:800; color: var(--blue-900); }
+    .tag button{
+      border:none; background:transparent; cursor:pointer;
+      font-size:14px; line-height:1; padding:0 2px;
+      color: var(--blue-700);
+    }
+    .tag button:hover{ color: var(--blue-900); }
+    .muted{ color:var(--muted); font-size:13px; }
+
+    .right-head{
+      display:flex; justify-content:space-between; align-items:flex-start; gap:10px;
+    }
+    .right-head h3{ margin:0; font-size:15px; color: var(--text); }
+    .small{ font-size:12px; color:var(--muted); }
+    .controls{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+    .controls select, .controls button{ height:34px; }
+    .divider{ height:1px; background:var(--line); margin:12px 0; }
+
+    .box{
+      border:1px solid var(--line); border-radius:12px; padding:10px;
+      background: #fbfcff;
+      font-size:13px;
+    }
+
+    /* ✅ 한 줄 표시 + 정렬 고정 */
+    .lineList { display:flex; flex-direction:column; gap:8px; }
+    .lineItem{
+      border:1px solid var(--line);
+      border-radius: 12px;
+      background:#fff;
+      padding: 8px 10px;
+      display:flex;
+      gap: 10px;
+      align-items: baseline;
+    }
+    .lineLeft{
+      width: 96px;
+      flex: 0 0 96px;
+      white-space: nowrap;
+      font-weight: 800;
+      color: var(--blue-900);
+    }
+    .lineMid{
+      width: 140px;
+      flex: 0 0 140px;
+      white-space: nowrap;
+      color: var(--text);
+    }
+    .lineRight{
+      color: var(--muted);
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .statTable{ width:100%; border-collapse:collapse; margin-top: 6px; }
+    .statTable th, .statTable td{
+      border-bottom:1px solid var(--line);
+      padding:8px 6px;
+      text-align:left;
+      font-size:13px;
+      vertical-align:top;
+      color: var(--text);
+    }
+    .statTable th{ width:40%; color:var(--muted); font-weight:700; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+    /* ✅ 차트 박스 */
+    .chartBox{
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+    }
+    canvas { max-width: 100%; background:#fff; border-radius: 12px; }
+
+    /* ✅ 시트 탭(버튼) */
+    .sheet-tabs{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:center;
+      padding: 2px 0;
+    }
+    .sheet-tab{
+      height:36px;
+      padding:0 12px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:#fff;
+      cursor:pointer;
+      user-select:none;
+      white-space:nowrap;
+    }
+    .sheet-tab:hover{ border-color:#cdd7e3; }
+    .sheet-tab.active{
+      background: var(--blue-100);
+      border-color: rgba(20,81,138,0.35);
+      color: var(--blue-900);
+      font-weight: 900;
+    }
+
+    /* ✅ 이상치 클릭 버튼 */
+    .linkBtn{
+      border:1px solid rgba(20,81,138,0.25);
+      background: var(--blue-050);
+      color: var(--blue-900);
+      border-radius: 999px;
+      padding: 2px 10px;
+      height: 26px;
+      line-height: 22px;
+      font-size: 12px;
+      cursor: pointer;
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+    }
+    .linkBtn:hover{ border-color: rgba(20,81,138,0.45); }
+
+    /* ✅ 이상치 리스트 */
+    .outlierBox{
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background:#fff;
+      overflow:hidden;
+    }
+    .outlierHead{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding: 10px;
+      background: #fbfcff;
+      border-bottom:1px solid var(--line);
+    }
+    .outlierTitle{
+      font-weight: 900;
+      color: var(--blue-900);
+      font-size: 13px;
+    }
+    .outlierList{
+      display:flex;
+      flex-direction:column;
+      max-height: 220px;
+      overflow:auto;
+    }
+    .outlierRow{
+      display:flex;
+      gap:10px;
+      padding: 10px;
+      border-bottom:1px solid var(--line);
+      cursor:pointer;
+    }
+    .outlierRow:hover{ background: var(--blue-050); }
+    .outlierVal{
+      width: 92px;
+      flex: 0 0 92px;
+      font-weight: 900;
+      color: var(--blue-900);
+      white-space:nowrap;
+    }
+    .outlierText{
+      color: var(--muted);
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space:nowrap;
+      flex:1;
+    }
+
+    /* ✅ 이제 "데이터 분석 시작" 버튼은 사용 안함 */
+    #applyStats, #clearAnalysis { display:none; }
+  </style>
+</head>
+<body>
+
+  <!-- ✅ 로고 -->
+  <div class="globalLogo">
+    <div id="logoWrap" class="logoWrap" title="클릭해서 로고 업로드">
+      <img id="companyLogo" alt="Company Logo" />
+      <div id="logoHint" class="logoHint">로고 업로드(클릭)</div>
+    </div>
+    <input id="logoInput" type="file" accept="image/*" />
+  </div>
+
+  <div class="toolbar">
+    <input id="file" type="file" accept=".xlsx,.xls" />
+    <div id="sheetTabs" class="sheet-tabs" aria-label="시트 선택"></div>
+    <button id="resetFilters" disabled>필터 초기화</button>
+    <span class="spacer"></span>
+  </div>
+
+  <div id="filterTags" class="filter-tags">
+    <span class="muted">현재 필터: 없음</span>
+  </div>
+
+  <div class="layout">
+    <div class="left panel" id="gridWrap">
+      <div id="grid" class="ag-theme-quartz"></div>
+    </div>
+
+    <div class="right panel">
+      <div class="right-head">
+        <div>
+          <h3>데이터 상세 분석(통계+분포곡선)</h3>
+          <span class="small" id="analysisInfo">자동 분석: 대기 중</span>
+        </div>
+      </div>
+
+      <div class="controls">
+        <label class="small">
+          기준값 설정:
+          <select id="metricCol" disabled></select>
+        </label>
+        <button id="applyStats" disabled>데이터 분석 시작</button>
+        <button id="clearAnalysis" disabled>초기화</button>
+      </div>
+
+      <div class="small" id="rowInfo">데이터 업로드 후, 필터를 걸면 자동으로 분석 결과가 갱신됩니다.</div>
+
+      <div class="divider"></div>
+
+      <div id="contentArea" class="box">
+        아직 분석 결과가 없습니다.
+      </div>
+    </div>
+  </div>
+
+<script>
+  const fileInput = document.getElementById('file');
+  const sheetTabsEl = document.getElementById('sheetTabs');
+  const resetFiltersBtn = document.getElementById('resetFilters');
+  const filterTagsEl = document.getElementById('filterTags');
+
+  const metricColSelect = document.getElementById('metricCol');
+
+  const analysisInfoEl = document.getElementById('analysisInfo');
+  const rowInfoEl = document.getElementById('rowInfo');
+  const contentArea = document.getElementById('contentArea');
+
+  // ✅ 로고
+  const logoWrap = document.getElementById('logoWrap');
+  const logoImg = document.getElementById('companyLogo');
+  const logoHint = document.getElementById('logoHint');
+  const logoInput = document.getElementById('logoInput');
+
+  let workbook = null;
+  let gridApi = null;
+  let currentColumnDefs = [];
+
+  // ✅ 우측 패널에서 “이상치 클릭”을 처리하기 위해 마지막 분석 결과 보관
+  let lastBaseline = null;
+  let currentOutlierView = null; // "low" | "high" | null
+
+  // ✅ 데이터 텍스트는 c0~c3
+  const DISPLAY_FIELDS = ["c0", "c1", "c2", "c3"];
+  function rowToText(data){
+    const parts = [];
+    for (const f of DISPLAY_FIELDS){
+      const v = data?.[f];
+      if (v === null || v === undefined || v === "") continue;
+      parts.push(String(v));
+    }
+    return parts.join("/");
+  }
+
+  // ===== 텍스트/숫자 규칙 =====
+  const PURE_NUMBER_RE = /^[+-]?\d+(\.\d+)?$/;
+  const roundTo2 = (n) => Math.round(n * 100) / 100;
+
+  function normalizeCell(raw){
+    if (raw === null || raw === undefined || raw === "") return { value:"", force2dp:false };
+
+    if (typeof raw === "number" && Number.isFinite(raw)){
+      const hasDecimal = !Number.isInteger(raw);
+      return hasDecimal ? { value: roundTo2(raw), force2dp:true } : { value: raw, force2dp:false };
+    }
+
+    if (typeof raw === "string"){
+      const s = raw.trim();
+      if (s === "") return { value:"", force2dp:false };
+
+      if (PURE_NUMBER_RE.test(s)){
+        const n = Number(s);
+        if (!Number.isFinite(n)) return { value: raw, force2dp:false };
+        const hasDecimal = s.includes(".");
+        return hasDecimal ? { value: roundTo2(n), force2dp:true } : { value: n, force2dp:false };
+      }
+      return { value: raw, force2dp:false };
+    }
+
+    return { value: String(raw), force2dp:false };
+  }
+
+  function escapeHtml(v){
+    return String(v ?? "")
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+
+  function extractFilterValueOnly(model){
+    if (!model) return "";
+    if (model.filterModels && Array.isArray(model.filterModels)){
+      return model.filterModels.map(extractFilterValueOnly).filter(Boolean).join(" AND ");
+    }
+    if (model.values && Array.isArray(model.values)){
+      const sample = model.values.slice(0,3).join(", ");
+      const more = model.values.length > 3 ? ` 외 ${model.values.length - 3}` : "";
+      return `[${sample}${more}]`;
+    }
+    if (typeof model.filter !== "undefined"){
+      if (model.type === "inRange" && typeof model.filterTo !== "undefined") return `${model.filter} ~ ${model.filterTo}`;
+      return `${model.filter}`;
+    }
+    if (typeof model.dateFrom !== "undefined"){
+      if (model.type === "inRange" && typeof model.dateTo !== "undefined") return `${model.dateFrom} ~ ${model.dateTo}`;
+      return `${model.dateFrom}`;
+    }
+    return "적용됨";
+  }
+
+  function headerNameByField(field){
+    const def = currentColumnDefs.find(d => d.field === field);
+    return def?.headerName ?? field;
+  }
+
+  function renderFilterTags(){
+    if (!gridApi) return;
+    const model = gridApi.getFilterModel?.() || {};
+    const fields = Object.keys(model);
+
+    filterTagsEl.innerHTML = "";
+    if (fields.length === 0){
+      filterTagsEl.innerHTML = `<span class="muted">현재 필터: 없음</span>`;
+      resetFiltersBtn.disabled = true;
+      return;
+    }
+    resetFiltersBtn.disabled = false;
+
+    fields.forEach((field) => {
+      const header = headerNameByField(field);
+      const valueOnly = extractFilterValueOnly(model[field]);
+
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.innerHTML = `<strong>${escapeHtml(header)}</strong>: ${escapeHtml(valueOnly)}`;
+
+      const x = document.createElement("button");
+      x.type = "button";
+      x.title = "이 필터 제거";
+      x.textContent = "×";
+      x.addEventListener("click", () => {
+        const newModel = gridApi.getFilterModel?.() || {};
+        delete newModel[field];
+        gridApi.setFilterModel?.(Object.keys(newModel).length ? newModel : null);
+        gridApi.onFilterChanged?.();
+        gridApi.refreshHeader?.();
+        renderFilterTags();
+        scheduleAutoAnalysis();
+      });
+
+      tag.appendChild(x);
+      filterTagsEl.appendChild(tag);
+    });
+  }
+
+  // ✅ 더블클릭 = 동일값 equals 필터 자동 적용
+  function applyEqualsFilter(field, value){
+    if (!gridApi || !field) return;
+
+    const model = gridApi.getFilterModel?.() || {};
+
+    if (value === null || value === undefined || value === "") {
+      delete model[field];
+      gridApi.setFilterModel?.(Object.keys(model).length ? model : null);
+      gridApi.onFilterChanged?.();
+      gridApi.refreshHeader?.();
+      renderFilterTags();
+      scheduleAutoAnalysis();
+      return;
+    }
+
+    const isNum = (typeof value === "number" && Number.isFinite(value));
+    model[field] = isNum
+      ? { filterType: "number", type: "equals", filter: value }
+      : { filterType: "text", type: "equals", filter: String(value) };
+
+    gridApi.setFilterModel?.(model);
+    gridApi.onFilterChanged?.();
+    gridApi.refreshHeader?.();
+    renderFilterTags();
+    scheduleAutoAnalysis();
+  }
+
+  // ===== 통계 =====
+  function quantile(sorted, q){
+    const n = sorted.length;
+    if (n === 0) return NaN;
+    const pos = (n - 1) * q;
+    const base = Math.floor(pos);
+    const rest = pos - base;
+    if (sorted[base + 1] === undefined) return sorted[base];
+    return sorted[base] + rest * (sorted[base + 1] - sorted[base]);
+  }
+  function median(sorted){ return quantile(sorted, 0.5); }
+
+  function variance(arr, mean, sample){
+    const n = arr.length;
+    if (n === 0) return NaN;
+    let s = 0;
+    for (const x of arr){
+      const d = x - mean;
+      s += d * d;
+    }
+    const denom = sample ? (n - 1) : n;
+    if (denom <= 0) return NaN;
+    return s / denom;
+  }
+
+  function fmt(x){
+    if (typeof x !== "number" || !Number.isFinite(x)) return "-";
+    return (Math.round(x * 100) / 100).toFixed(2);
+  }
+
+  function pickNearest(rowsSorted, target){
+    if (rowsSorted.length === 0) return null;
+
+    let lo = 0, hi = rowsSorted.length;
+    while (lo < hi){
+      const mid = (lo + hi) >> 1;
+      if (rowsSorted[mid].value < target) lo = mid + 1;
+      else hi = mid;
+    }
+
+    const cand = [];
+    if (lo < rowsSorted.length) cand.push(rowsSorted[lo]);
+    if (lo - 1 >= 0) cand.push(rowsSorted[lo - 1]);
+
+    cand.sort((a,b) => {
+      const da = Math.abs(a.value - target);
+      const db = Math.abs(b.value - target);
+      if (da !== db) return da - db;
+      if (a.value !== b.value) return a.value - b.value;
+      const t = a.text.localeCompare(b.text, "ko");
+      if (t !== 0) return t;
+      return a.idx - b.idx;
+    });
+
+    return cand[0];
+  }
+
+  function computeStats(sortedValues){
+    const n = sortedValues.length;
+    if (n === 0) return { n:0 };
+
+    const min = sortedValues[0];
+    const max = sortedValues[n-1];
+
+    let sum = 0;
+    for (const x of sortedValues) sum += x;
+    const mean = sum / n;
+
+    const varPop = variance(sortedValues, mean, false);
+    const varSample = variance(sortedValues, mean, true);
+    const sdPop = Math.sqrt(varPop);
+    const sdSample = Math.sqrt(varSample);
+
+    const q1 = quantile(sortedValues, 0.25);
+    const q2 = median(sortedValues);
+    const q3 = quantile(sortedValues, 0.75);
+    const p10 = quantile(sortedValues, 0.10);
+    const p90 = quantile(sortedValues, 0.90);
+    const iqr = q3 - q1;
+
+    const lowFence = q1 - 1.5 * iqr;
+    const highFence = q3 + 1.5 * iqr;
+
+    let outLow = 0, outHigh = 0;
+    for (const x of sortedValues){
+      if (x < lowFence) outLow++;
+      else if (x > highFence) outHigh++;
+    }
+
+    const cv = (mean === 0) ? NaN : (sdPop / Math.abs(mean));
+
+    let m2 = 0, m3 = 0, m4 = 0;
+    for (const x of sortedValues){
+      const d = x - mean;
+      const d2 = d*d;
+      m2 += d2;
+      m3 += d2*d;
+      m4 += d2*d2;
+    }
+    m2 /= n; m3 /= n; m4 /= n;
+    const skew = (m2 === 0) ? NaN : (m3 / Math.pow(m2, 1.5));
+    const kurt = (m2 === 0) ? NaN : (m4 / (m2*m2)) - 3;
+
+    const med = q2;
+    const absDevs = sortedValues.map(x => Math.abs(x - med)).sort((a,b)=>a-b);
+    const mad = median(absDevs);
+
+    return {
+      n, sum, mean, min, max,
+      range: max - min,
+      p10, q1, q2, q3, p90,
+      iqr,
+      varPop, sdPop,
+      varSample, sdSample,
+      cv, skew, kurt, mad,
+      lowFence, highFence,
+      outLow, outHigh
+    };
+  }
+
+  // ✅ 분석 기준 생성 (현재 필터 상태 기준 즉시 계산)
+  // ✅ outliersLow / outliersHigh를 같이 만들어둠 (클릭해서 보여주려고)
+  function buildAnalysisBaseline(){
+    const metricField = metricColSelect.value;
+    const totalDisplayed = gridApi.getDisplayedRowCount?.() ?? 0;
+
+    const rows = [];
+    let idx = 0;
+
+    gridApi.forEachNodeAfterFilterAndSort((node) => {
+      const v = node.data?.[metricField];
+      if (typeof v === "number" && Number.isFinite(v)){
+        rows.push({
+          idx: idx++,
+          value: v,
+          text: rowToText(node.data),
+          data: node.data
+        });
+      }
+    });
+
+    const values = rows.map(r => r.value).sort((a,b) => a-b);
+    const stats = computeStats(values);
+
+    // 값 정렬(통계 픽용)
+    const rowsSorted = rows.slice().sort((a,b) => {
+      if (a.value !== b.value) return a.value - b.value;
+      const t = a.text.localeCompare(b.text, "ko");
+      if (t !== 0) return t;
+      return a.idx - b.idx;
+    });
+
+    const filterModel = gridApi.getFilterModel?.() || {};
+
+    const picked = {
+      mean: pickNearest(rowsSorted, stats.mean),
+      min:  rowsSorted.length ? rowsSorted[0] : null,
+      max:  rowsSorted.length ? rowsSorted[rowsSorted.length - 1] : null,
+      p10:  pickNearest(rowsSorted, stats.p10),
+      q1:   pickNearest(rowsSorted, stats.q1),
+      q2:   pickNearest(rowsSorted, stats.q2),
+      q3:   pickNearest(rowsSorted, stats.q3),
+      p90:  pickNearest(rowsSorted, stats.p90),
+    };
+
+    // ✅ 이상치 리스트
+    const lowFence = stats.lowFence;
+    const highFence = stats.highFence;
+
+    const outliersLow = [];
+    const outliersHigh = [];
+
+    if (Number.isFinite(lowFence) || Number.isFinite(highFence)){
+      for (const r of rowsSorted){
+        if (Number.isFinite(lowFence) && r.value < lowFence) outliersLow.push(r);
+        else if (Number.isFinite(highFence) && r.value > highFence) outliersHigh.push(r);
+      }
+    }
+
+    return {
+      createdAt: new Date(),
+      metricField,
+      totalDisplayed,
+      filterModel,
+      stats,
+      picked,
+      values,
+      outliersLow,
+      outliersHigh
+    };
+  }
+
+  function filterSummaryText(filterModel){
+    const fields = Object.keys(filterModel || {});
+    if (fields.length === 0) return "없음";
+    return fields.map(f => `${headerNameByField(f)}=${extractFilterValueOnly(filterModel[f])}`).join(" / ");
+  }
+
+  // ===== KDE(커널 밀도) =====
+  let densityChart = null;
+
+  const statHoverPlugin = {
+    id: 'statHoverPlugin',
+    afterEvent(chart, args){
+      const e = args.event;
+      if (!e) return;
+      if (e.type !== 'mousemove' && e.type !== 'mouseout') return;
+
+      if (e.type === 'mouseout'){
+        chart.$nearestStat = null;
+        return;
+      }
+
+      const xScale = chart.scales.x;
+      const xValue = xScale?.getValueForPixel?.(e.x);
+      if (!Number.isFinite(xValue)) return;
+
+      const stats = chart.$statsPoints || [];
+      if (!stats.length) return;
+
+      let best = null;
+      let bestD = Infinity;
+      for (const s of stats){
+        const d = Math.abs(s.T - xValue);
+        if (d < bestD){ bestD = d; best = s; }
+      }
+      chart.$nearestStat = best;
+    }
+  };
+
+  function stdDev(values){
+    if (values.length < 2) return 0;
+    let sum = 0;
+    for (const x of values) sum += x;
+    const mean = sum / values.length;
+    let s = 0;
+    for (const x of values){
+      const d = x - mean;
+      s += d*d;
+    }
+    return Math.sqrt(s / (values.length - 1));
+  }
+
+  function iqrOfSorted(sorted){
+    if (!sorted.length) return 0;
+    const q1 = quantile(sorted, 0.25);
+    const q3 = quantile(sorted, 0.75);
+    return q3 - q1;
+  }
+
+  function silvermanBandwidth(sorted){
+    const n = sorted.length;
+    if (n < 2) return 1;
+
+    const sd = stdDev(sorted);
+    const iqr = iqrOfSorted(sorted);
+    const sigma = Math.min(sd, (iqr > 0 ? iqr / 1.34 : sd)) || sd || 1;
+    const h = 0.9 * sigma * Math.pow(n, -0.2);
+    return (h > 0 ? h : 1);
+  }
+
+  function gaussianKernel(u){
+    return Math.exp(-0.5 * u * u) / Math.sqrt(2 * Math.PI);
+  }
+
+  function kde(sorted, x, h){
+    const n = sorted.length;
+    if (n === 0) return 0;
+    let s = 0;
+    for (const xi of sorted) s += gaussianKernel((x - xi) / h);
+    return s / (n * h);
+  }
+
+  function buildKdeCurve(sorted){
+    if (sorted.length === 0) return { xs:[0], ys:[0] };
+
+    const min = sorted[0];
+    const max = sorted[sorted.length - 1];
+    const span = (max - min) || 1;
+
+    const pad = span * 0.08;
+    const start = min - pad;
+    const end = max + pad;
+
+    const h = silvermanBandwidth(sorted);
+    const points = 220;
+
+    const xs = [];
+    const ys = [];
+    for (let i = 0; i <= points; i++){
+      const x = start + (end - start) * (i / points);
+      xs.push(Number(x.toFixed(2)));
+      ys.push(kde(sorted, x, h));
+    }
+    return { xs, ys };
+  }
+
+  function maxOf(arr){
+    let m = -Infinity;
+    for (const v of arr) if (v > m) m = v;
+    return m;
+  }
+
+  function nearestCurveY(curve, x){
+    let bestI = 0, bestD = Infinity;
+    for (let i = 0; i < curve.xs.length; i++){
+      const d = Math.abs(curve.xs[i] - x);
+      if (d < bestD){ bestD = d; bestI = i; }
+    }
+    return curve.ys[bestI] ?? 0;
+  }
+
+  function vlineDataset(x, yMax, label){
+    return {
+      type: 'line',
+      label,
+      data: [{x, y: 0}, {x, y: yMax}],
+      parsing: false,
+      pointRadius: 0,
+      borderWidth: 1,
+      borderDash: [6, 6]
+    };
+  }
+
+  function markerPointDataset(x, y, label, payload){
+    return {
+      type: 'scatter',
+      label,
+      data: [{x, y, _payload: payload}],
+      parsing: false,
+      pointRadius: 8,
+      pointHoverRadius: 12,
+      pointHitRadius: 16
+    };
+  }
+
+  function renderDensityChart(canvasEl, sortedValues, stats, picked, metricName){
+    if (densityChart) { densityChart.destroy(); densityChart = null; }
+    if (!sortedValues.length){
+      densityChart = new Chart(canvasEl, { type:'line', data:{labels:["-"], datasets:[{data:[0]}]} });
+      return;
+    }
+
+    const curve = buildKdeCurve(sortedValues);
+    const yMax = maxOf(curve.ys) * 1.08;
+
+    const statPoints = [
+      { label:"최소(min)",  T: stats.min,  P: picked.min?.value,  text: picked.min?.text },
+      { label:"P10(p10)",   T: stats.p10,  P: picked.p10?.value,  text: picked.p10?.text },
+      { label:"Q1(q1)",     T: stats.q1,   P: picked.q1?.value,   text: picked.q1?.text },
+      { label:"Q2(q2)",     T: stats.q2,   P: picked.q2?.value,   text: picked.q2?.text },
+      { label:"평균(mean)", T: stats.mean, P: picked.mean?.value, text: picked.mean?.text },
+      { label:"Q3(q3)",     T: stats.q3,   P: picked.q3?.value,   text: picked.q3?.text },
+      { label:"P90(p90)",   T: stats.p90,  P: picked.p90?.value,  text: picked.p90?.text },
+      { label:"최대(max)",  T: stats.max,  P: picked.max?.value,  text: picked.max?.text },
+    ].map(s => ({
+      ...s,
+      P: (typeof s.P === "number" && Number.isFinite(s.P)) ? s.P : NaN,
+      text: s.text ?? "-"
+    }));
+
+    const datasets = [];
+
+    datasets.push({
+      type:'line',
+      label:`분포곡선(KDE) - ${metricName}`,
+      data: curve.xs.map((x, i) => ({x, y: curve.ys[i]})),
+      parsing: false,
+      pointRadius: 0,
+      borderWidth: 2,
+      tension: 0.25
+    });
+
+    if (Number.isFinite(stats.lowFence))  datasets.push(vlineDataset(stats.lowFence,  yMax, "Outlier Low Fence"));
+    if (Number.isFinite(stats.highFence)) datasets.push(vlineDataset(stats.highFence, yMax, "Outlier High Fence"));
+
+    for (const sp of statPoints){
+      datasets.push(vlineDataset(sp.T, yMax, `${sp.label} (T)`));
+      const y = nearestCurveY(curve, sp.T);
+      datasets.push(markerPointDataset(
+        sp.T, y, `${sp.label} point`,
+        { label: sp.label, T: sp.T, P: sp.P, text: sp.text, metric: metricName }
+      ));
+    }
+
+    densityChart = new Chart(canvasEl, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const raw = ctx.raw;
+                const ds = ctx.dataset;
+
+                if (ds.type === 'scatter' && raw && raw._payload){
+                  const p = raw._payload;
+                  return [
+                    `${p.label}`,
+                    `T=${fmt(p.T)} / P=${fmt(p.P)}`,
+                    `${p.text}`
+                  ];
+                }
+
+                const near = ctx.chart.$nearestStat;
+                if (near){
+                  return [
+                    `Nearest: ${near.label}`,
+                    `T=${fmt(near.T)} / P=${fmt(near.P)}`,
+                    `${near.text}`
+                  ];
+                }
+
+                if (ds.label && ds.label.startsWith("Outlier")){
+                  const x = raw?.x;
+                  return `${ds.label}: ${fmt(x)}`;
+                }
+                const x = raw?.x;
+                return ds.label ? `${ds.label}: ${fmt(x)}` : '';
+              }
+            }
+          }
+        },
+        scales: {
+          x: { type: 'linear', title: { display: true, text: metricName } },
+          y: { beginAtZero: true, title: { display: true, text: 'Density' } }
+        }
+      },
+      plugins: [statHoverPlugin]
+    });
+
+    densityChart.$statsPoints = statPoints;
+    densityChart.$nearestStat = null;
+  }
+
+  // ✅ 이상치 리스트 렌더링
+  function renderOutlierList(baseline, kind){
+    const stats = baseline.stats;
+    const metricName = headerNameByField(baseline.metricField);
+
+    const list = (kind === "low") ? baseline.outliersLow : baseline.outliersHigh;
+    const fence = (kind === "low") ? stats.lowFence : stats.highFence;
+
+    const title = (kind === "low")
+      ? `이상치(하한 미만) 목록 — ${metricName} < ${fmt(fence)}`
+      : `이상치(상한 초과) 목록 — ${metricName} > ${fmt(fence)}`;
+
+    if (!list || list.length === 0){
+      return `
+        <div class="outlierBox" id="outlierBox">
+          <div class="outlierHead">
+            <div class="outlierTitle">${escapeHtml(title)}</div>
+            <button type="button" class="linkBtn" data-action="outlierClose">닫기</button>
+          </div>
+          <div style="padding:10px; color: var(--muted);">해당 이상치가 없습니다.</div>
+        </div>
+      `;
+    }
+
+    // 너무 많으면 UX가 힘들어서 300개까지만 보여주고 안내
+    const limit = 300;
+    const sliced = list.slice(0, limit);
+    const more = list.length > limit ? `<div style="padding:10px; color: var(--muted); border-top:1px solid var(--line);">* ${limit}개까지만 표시했습니다. (총 ${list.length.toLocaleString()}개)</div>` : "";
+
+    const rowsHtml = sliced.map((r, i) => {
+      const txt = r.text ?? "-";
+      return `
+        <div class="outlierRow" data-action="outlierRow" data-kind="${kind}" data-i="${i}" title="클릭하면 그 값으로 equals 필터 적용">
+          <div class="outlierVal mono">${fmt(r.value)}</div>
+          <div class="outlierText">${escapeHtml(txt)}</div>
+        </div>
+      `;
+    }).join("");
+
+    return `
+      <div class="outlierBox" id="outlierBox">
+        <div class="outlierHead">
+          <div class="outlierTitle">${escapeHtml(title)} (총 ${list.length.toLocaleString()}개)</div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="linkBtn" data-action="outlierFilterGrid" data-kind="${kind}">
+              그리드로 출력
+            </button>
+            <button type="button" class="linkBtn" data-action="outlierClose">닫기</button>
+          </div>
+        </div>
+        <div class="outlierList">${rowsHtml}</div>
+        ${more}
+        <div style="padding:10px; color: var(--muted); border-top:1px solid var(--line);">
+          * 목록의 한 줄을 클릭하면, 그 값으로 <b>equals</b> 필터가 적용됩니다(빠르게 해당 행 찾기용).
+        </div>
+      </div>
+    `;
+  }
+
+  // ✅ outlier 버튼/행 클릭 처리 (contentArea는 매번 innerHTML로 갈아끼우니까 “이벤트 위임”이 깔끔)
+  contentArea.addEventListener("click", (e) => {
+    const el = e.target?.closest?.("[data-action]");
+    if (!el) return;
+    if (!lastBaseline) return;
+
+    const action = el.getAttribute("data-action");
+
+    if (action === "outlierShowLow"){
+      currentOutlierView = (currentOutlierView === "low") ? null : "low";
+      renderAnalysis(lastBaseline);
+      // 펼쳐졌으면 그 위치로 살짝 스크롤
+      const box = document.getElementById("outlierBox");
+      box?.scrollIntoView?.({ behavior:"smooth", block:"nearest" });
+      return;
+    }
+
+    if (action === "outlierShowHigh"){
+      currentOutlierView = (currentOutlierView === "high") ? null : "high";
+      renderAnalysis(lastBaseline);
+      const box = document.getElementById("outlierBox");
+      box?.scrollIntoView?.({ behavior:"smooth", block:"nearest" });
+      return;
+    }
+
+    if (action === "outlierClose"){
+      currentOutlierView = null;
+      renderAnalysis(lastBaseline);
+      return;
+    }
+
+    if (action === "outlierFilterGrid"){
+      const kind = el.getAttribute("data-kind");
+      const metricField = lastBaseline.metricField;
+      const stats = lastBaseline.stats;
+
+      // 현재 필터 위에 "기준 컬럼 필터"만 덮어씌우기
+      const model = gridApi.getFilterModel?.() || {};
+      if (kind === "low" && Number.isFinite(stats.lowFence)){
+        model[metricField] = { filterType:"number", type:"lessThan", filter: stats.lowFence };
+      } else if (kind === "high" && Number.isFinite(stats.highFence)){
+        model[metricField] = { filterType:"number", type:"greaterThan", filter: stats.highFence };
+      }
+
+      gridApi.setFilterModel?.(model);
+      gridApi.onFilterChanged?.();
+      gridApi.refreshHeader?.();
+      renderFilterTags();
+      // 자동 분석은 필터 바뀌며 돌아가지만, UX상 즉시 실행
+      scheduleAutoAnalysis();
+      return;
+    }
+
+    if (action === "outlierRow"){
+      const kind = el.getAttribute("data-kind");
+      const i = Number(el.getAttribute("data-i"));
+      const list = (kind === "low") ? lastBaseline.outliersLow : lastBaseline.outliersHigh;
+      const r = list?.[i];
+      if (!r) return;
+
+      // "그 데이터 보여줘"의 가장 직관적인 방식: 해당 값으로 equals 필터 적용해서 그리드에서 바로 보이게
+      applyEqualsFilter(lastBaseline.metricField, r.value);
+      return;
+    }
+  });
+
+  function renderAnalysis(baseline){
+    lastBaseline = baseline; // ✅ 클릭용으로 보관
+
+    const stats = baseline.stats;
+    const title = headerNameByField(baseline.metricField);
+
+    rowInfoEl.textContent =
+      `필터 후 표시 행: ${baseline.totalDisplayed.toLocaleString()} · 선택 컬럼 숫자값: ${stats.n.toLocaleString()}`;
+
+    const filterText = filterSummaryText(baseline.filterModel);
+
+    if (!baseline.metricField){
+      contentArea.textContent = "기준 컬럼이 없습니다.";
+      if (densityChart) { densityChart.destroy(); densityChart = null; }
+      return;
+    }
+
+    if (stats.n === 0){
+      contentArea.innerHTML = `
+        <div><b>${escapeHtml(title)}</b> 기준 분석</div>
+        <div class="small">필터: ${escapeHtml(filterText)}</div>
+        <div class="divider"></div>
+        <div>숫자 데이터가 없어 통계를 계산할 수 없습니다.</div>
+      `;
+      if (densityChart) { densityChart.destroy(); densityChart = null; }
+      return;
+    }
+
+    function line(label, target, picked){
+      const pVal = picked ? picked.value : NaN;
+      const text = picked ? picked.text : "-";
+      return `
+        <div class="lineItem" title="${escapeHtml(text)}">
+          <div class="lineLeft">${escapeHtml(label)}</div>
+          <div class="lineMid mono">T=${fmt(target)} P=${fmt(pVal)}</div>
+          <div class="lineRight">${escapeHtml(text)}</div>
+        </div>
+      `;
+    }
+
+    const outlierLowBtn = `
+      <button type="button" class="linkBtn" data-action="outlierShowLow">
+        이상치(하한 미만) ${stats.outLow.toLocaleString()}
+      </button>
+    `;
+    const outlierHighBtn = `
+      <button type="button" class="linkBtn" data-action="outlierShowHigh">
+        이상치(상한 초과) ${stats.outHigh.toLocaleString()}
+      </button>
+    `;
+
+    const outlierSection =
+      currentOutlierView
+        ? renderOutlierList(baseline, currentOutlierView)
+        : "";
+
+    contentArea.innerHTML = `
+      <div><b>${escapeHtml(title)}</b> 기준 분석</div>
+      <div class="small">필터: ${escapeHtml(filterText)}</div>
+
+      <div class="divider"></div>
+
+      <div class="lineList">
+        ${line("최대(max)", stats.max, baseline.picked.max)}
+        ${line("P90(상위10%)", stats.p90, baseline.picked.p90)}
+        ${line("Q3(상위25%))", stats.q3, baseline.picked.q3)}
+        ${line("평균(mean)", stats.mean, baseline.picked.mean)}
+        ${line("Q2(중간값)", stats.q2, baseline.picked.q2)}
+        ${line("Q1(하위25%)", stats.q1, baseline.picked.q1)}
+        ${line("P10(하위10%)", stats.p10, baseline.picked.p10)}
+        ${line("최소(min)", stats.min, baseline.picked.min)}
+      </div>
+
+      <div class="divider"></div>
+
+      <div><b>분포 곡선 그래프(KDE)</b> <span class="small">— 현재 필터 결과 기반</span></div>
+      <div class="chartBox" style="height:300px;">
+        <canvas id="densityCanvas"></canvas>
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        ${outlierLowBtn}
+        ${outlierHighBtn}
+        <span class="small">* 클릭하면 해당 이상치 데이터 목록이 아래에 펼쳐집니다.</span>
+      </div>
+
+      ${outlierSection}
+
+      <div class="divider"></div>
+
+      <div><b>통계 지수(Statistical Measures)</b></div>
+      <table class="statTable">
+        <tr><th>IQR(Q3-Q1)</th><td class="mono">${fmt(stats.iqr)}</td><td>중간 50% 데이터 폭</td></tr>
+        <tr><th>분산(모집단)</th><td class="mono">${fmt(stats.varPop)}</td><td>제곱거리 평균(n)</td></tr>
+        <tr><th>표준편차(모집단)</th><td class="mono">${fmt(stats.sdPop)}</td><td>분산의 제곱근</td></tr>
+        <tr><th>분산(표본)</th><td class="mono">${fmt(stats.varSample)}</td><td>표본 분산(n-1)</td></tr>
+        <tr><th>표준편차(표본)</th><td class="mono">${fmt(stats.sdSample)}</td><td>표본 표준편차</td></tr>
+        <tr><th>변동계수(CV)</th><td class="mono">${fmt(stats.cv)}</td><td>sd/mean</td></tr>
+        <tr><th>왜도</th><td class="mono">${fmt(stats.skew)}</td><td>비대칭(음수=왼쪽 꼬리)</td></tr>
+        <tr><th>첨도</th><td class="mono">${fmt(stats.kurt)}</td><td>꼬리/뾰족함(0≈정규)</td></tr>
+        <tr><th>MAD</th><td class="mono">${fmt(stats.mad)}</td><td>중앙값 기준 편차</td></tr>
+        <tr><th>이상치 하한</th><td class="mono">${fmt(stats.lowFence)}</td><td>Q1-1.5*IQR</td></tr>
+        <tr><th>이상치 상한</th><td class="mono">${fmt(stats.highFence)}</td><td>Q3+1.5*IQR</td></tr>
+        <tr><th>이상치(하한 미만)</th><td class="mono">${stats.outLow.toLocaleString()}</td><td>하한 아래 개수</td></tr>
+        <tr><th>이상치(상한 초과)</th><td class="mono">${stats.outHigh.toLocaleString()}</td><td>상한 위 개수</td></tr>
+      </table>
+
+      <div class="divider"></div>
+      <div class="small">* 필터를 바꾸는 즉시 통계/그래프가 자동 갱신됩니다.</div>
+    `;
+
+    const canvas = document.getElementById("densityCanvas");
+    renderDensityChart(canvas, baseline.values, stats, baseline.picked, title);
+  }
+
+  // ===== ✅ 자동 분석(필터 변경시 바로) : 디바운스 =====
+  let analysisTimer = null;
+  function scheduleAutoAnalysis(){
+    if (!gridApi) return;
+    if (analysisTimer) clearTimeout(analysisTimer);
+    analysisTimer = setTimeout(() => {
+      analysisTimer = null;
+      runAutoAnalysisNow();
+    }, 120);
+  }
+
+  function runAutoAnalysisNow(){
+    const metricField = metricColSelect.value;
+    if (!metricField){
+      analysisInfoEl.textContent = "자동 분석: 기준 컬럼이 없습니다.";
+      rowInfoEl.textContent = "숫자 컬럼이 없어 분석할 수 없습니다.";
+      contentArea.textContent = "아직 분석 결과가 없습니다.";
+      if (densityChart) { densityChart.destroy(); densityChart = null; }
+      lastBaseline = null;
+      return;
+    }
+
+    const baseline = buildAnalysisBaseline();
+    analysisInfoEl.textContent = `자동 분석 갱신: ${baseline.createdAt.toLocaleString()}`;
+
+    // 필터가 바뀌면 이상치 리스트 펼침 상태는 기본 닫기(원하면 유지하도록 바꿀 수 있음)
+    currentOutlierView = null;
+
+    renderAnalysis(baseline);
+  }
+
+  // ===== 숫자 컬럼 목록 =====
+  function rebuildMetricColumns(){
+    metricColSelect.innerHTML = "";
+    metricColSelect.disabled = true;
+
+    if (!gridApi || currentColumnDefs.length === 0) return;
+
+    const sampleCount = Math.min(200, gridApi.getDisplayedRowCount?.() ?? 0);
+
+    const numericFields = [];
+    for (const def of currentColumnDefs){
+      const field = def.field;
+      if (!field || field === "__force2dp") continue;
+
+      let hits = 0;
+      let checked = 0;
+
+      for (let i = 0; i < sampleCount; i++){
+        const node = gridApi.getDisplayedRowAtIndex(i);
+        if (!node) break;
+        const v = node.data?.[field];
+        if (v === "" || v === null || v === undefined) continue;
+        checked++;
+        if (typeof v === "number" && Number.isFinite(v)) hits++;
+        if (checked >= 40) break;
+      }
+
+      if (hits > 0) numericFields.push({ field, header: def.headerName ?? field });
+    }
+
+    if (numericFields.length === 0){
+      metricColSelect.appendChild(new Option("숫자 컬럼 없음", ""));
+      metricColSelect.disabled = true;
+      return;
+    }
+
+    for (const nf of numericFields){
+      metricColSelect.appendChild(new Option(nf.header, nf.field));
+    }
+    metricColSelect.disabled = false;
+    metricColSelect.value = numericFields[0].field;
+  }
+
+  metricColSelect.addEventListener("change", () => scheduleAutoAnalysis());
+
+  // ===== ✅ 시트 탭 렌더링 =====
+  function renderSheetTabs(sheetNames, activeName){
+    sheetTabsEl.innerHTML = "";
+    sheetNames.forEach((name, idx) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "sheet-tab" + (name === activeName ? " active" : "");
+      btn.textContent = `${idx + 1}. ${name}`;
+      btn.addEventListener("click", () => {
+        renderSheetTabs(sheetNames, name);
+        renderSheet(name);
+      });
+      sheetTabsEl.appendChild(btn);
+    });
+  }
+
+  // ===== AG Grid 옵션 =====
+  const gridOptions = {
+    defaultColDef: {
+      sortable: true,
+      resizable: true,
+      editable: false,
+      suppressClickEdit: true,
+
+      filter: true,
+      floatingFilter: true,
+      headerClass: (p) => (p.api?.isColumnFilterPresent?.(p.column) ? "filtered-header" : ""),
+      valueFormatter: (p) => {
+        const v = p.value;
+        const field = p.colDef.field;
+        const force2 = p.data?.__force2dp?.[field] === true;
+        if (force2 && typeof v === "number" && Number.isFinite(v)) return v.toFixed(2);
+        return v ?? "";
+      },
+    },
+
+    pagination: false,
+    animateRows: true,
+    suppressRowClickSelection: true,
+    rowBuffer: 20,
+
+    rowClassRules: {
+      "row-odd":  (params) => (params.node.rowIndex % 2) === 1,
+      "row-even": (params) => (params.node.rowIndex % 2) === 0,
+    },
+
+    onFilterChanged: () => {
+      gridApi?.refreshHeader?.();
+      renderFilterTags();
+      scheduleAutoAnalysis();
+    },
+
+    onCellDoubleClicked: (params) => {
+      const field = params?.colDef?.field;
+      const value = params?.value;
+      applyEqualsFilter(field, value);
+    },
+
+    onGridReady: (params) => {
+      gridApi = params.api;
+      renderFilterTags();
+    }
+  };
+
+  agGrid.createGrid(document.getElementById('grid'), gridOptions);
+
+  resetFiltersBtn.addEventListener('click', () => {
+    gridApi?.setFilterModel?.(null);
+    gridApi?.onFilterChanged?.();
+    gridApi?.refreshHeader?.();
+    renderFilterTags();
+    scheduleAutoAnalysis();
+  });
+
+  // ===== ✅ 로고 저장 =====
+  const LOGO_KEY = "company_logo_dataurl_v6";
+  function loadLogo(){
+    const dataUrl = localStorage.getItem(LOGO_KEY);
+    if (dataUrl){
+      logoImg.src = dataUrl;
+      logoImg.style.display = "block";
+      logoHint.style.display = "none";
+      logoWrap.classList.add("hasLogo");
+    } else {
+      logoImg.removeAttribute("src");
+      logoImg.style.display = "none";
+      logoHint.style.display = "block";
+      logoWrap.classList.remove("hasLogo");
+    }
+  }
+  logoWrap.addEventListener("click", () => logoInput.click());
+  logoInput.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      localStorage.setItem(LOGO_KEY, String(reader.result));
+      loadLogo();
+    };
+    reader.readAsDataURL(file);
+    logoInput.value = "";
+  });
+  loadLogo();
+
+  // ===== 엑셀 업로드 =====
+  fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const data = await file.arrayBuffer();
+    workbook = XLSX.read(data, { type: "array" });
+
+    const first = workbook.SheetNames[0];
+    renderSheetTabs(workbook.SheetNames, first);
+    renderSheet(first);
+  });
+
+  function renderSheet(sheetName){
+    const ws = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: "" });
+
+    if (!rows || rows.length === 0){
+      gridApi?.setGridOption?.('rowData', []);
+      if (!gridApi?.setGridOption) gridApi?.setRowData?.([]);
+      analysisInfoEl.textContent = "자동 분석: 데이터 없음";
+      contentArea.textContent = "아직 분석 결과가 없습니다.";
+      if (densityChart) { densityChart.destroy(); densityChart = null; }
+      lastBaseline = null;
+      currentOutlierView = null;
+      return;
+    }
+
+    const header = rows[0].map((h, i) => (String(h || `컬럼${i+1}`).trim() || `컬럼${i+1}`));
+    const body = rows.slice(1);
+
+    currentColumnDefs = header.map((h, idx) => ({
+      headerName: h,
+      field: `c${idx}`,
+      filter: true,
+    }));
+
+    const rowData = body.map((r) => {
+      const obj = { __force2dp: {} };
+      for (let i = 0; i < header.length; i++){
+        const field = `c${i}`;
+        const norm = normalizeCell(r[i]);
+        obj[field] = norm.value;
+        if (norm.force2dp) obj.__force2dp[field] = true;
+      }
+      return obj;
+    });
+
+    gridApi.setGridOption?.('columnDefs', currentColumnDefs);
+    gridApi.setGridOption?.('rowData', rowData);
+
+    if (!gridApi.setGridOption){
+      gridApi.setColumnDefs?.(currentColumnDefs);
+      gridApi.setRowData?.(rowData);
+    }
+
+    // 시트 변경 시 필터 초기화
+    gridApi.setFilterModel?.(null);
+    gridApi.onFilterChanged?.();
+    gridApi.refreshHeader?.();
+    renderFilterTags();
+
+    resetFiltersBtn.disabled = true;
+
+    setTimeout(() => {
+      gridApi.sizeColumnsToFit?.();
+      rebuildMetricColumns();
+
+      rowInfoEl.textContent = "필터를 걸면 자동으로 통계/분포곡선이 갱신됩니다.";
+      contentArea.textContent = "자동 분석 준비 중...";
+      currentOutlierView = null;
+      scheduleAutoAnalysis();
+    }, 0);
+  }
+</script>
+</body>
+</html>
